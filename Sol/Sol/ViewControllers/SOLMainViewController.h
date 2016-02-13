@@ -11,11 +11,11 @@
 #import "SOLSettingsViewController.h"
 #import "SOLWeatherView.h"
 
-@interface SOLMainViewController : UIViewController <UIScrollViewDelegate, CLLocationManagerDelegate, SOLWundergroundDownloaderDelegate, SOLAddLocationViewControllerDelegate, SOLSettingsViewControllerDelegate, SOLWeatherViewDelegate>
+@interface SOLMainViewController : UIViewController <UIScrollViewDelegate, CLLocationManagerDelegate, SOLAddLocationViewControllerDelegate, SOLSettingsViewControllerDelegate, SOLWeatherViewDelegate>
 
-/////////////////////////////////////////////////////////////////////////////
-/// @name Updating Weather Data
-/////////////////////////////////////////////////////////////////////////////
+// -----
+// @name Updating Weather Data
+// -----
 
 /**
  Updates the weather data for all nonlocal weather views if the minimum time since
@@ -23,11 +23,11 @@
  */
 - (void)updateWeatherData;
 
-/////////////////////////////////////////////////////////////////////////////
-/// @name Properties
-/////////////////////////////////////////////////////////////////////////////
+// -----
+// @name Properties
+// -----
 
-/// Location manager used to track the user's current location
-@property (strong, nonatomic, readonly) CLLocationManager   *locationManager;
+//  Location manager used to track the user's current location
+@property (nonatomic, readonly) CLLocationManager   *locationManager;
 
 @end

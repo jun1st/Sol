@@ -11,19 +11,16 @@
 #import "NSString+Substring.h"
 #import "Climacons.h"
 
-#define kAPI_KEY @""
-
-
 #pragma mark - SOLWundergroundDownloader Class Extension
 
 @interface SOLWundergroundDownloader ()
-{
-    /// Used by the downloader to determine the names of locations based on coordinates
-    CLGeocoder  *_geocoder;
-    
-    /// API key
-    NSString    *_key;
-}
+
+//  Used by the downloader to determine the names of locations based on coordinates
+@property (nonatomic) CLGeocoder    *geocoder;
+
+//  API key
+@property (nonatomic) NSString      *key;
+
 @end
 
 #pragma mark - SOLWundergroundDownloader Implementation
@@ -32,7 +29,7 @@
 
 - (instancetype)init
 {
-    /// Instances of SOLWundergroundDownloader should be impossible to make using init
+    //  Instances of SOLWundergroundDownloader should be impossible to make using init
     [NSException raise:@"SOLSingletonException" format:@"SOLWundergroundDownloader cannot be initialized using init"];
     return nil;
 }
@@ -44,7 +41,11 @@
     static SOLWundergroundDownloader *sharedDownloader = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        sharedDownloader = [[SOLWundergroundDownloader alloc]initWithAPIKey:kAPI_KEY];
+#warning Project bundle must contain a file name "API_KEY" containing a valid Wunderground API key
+        NSString *path = [[NSBundle mainBundle]pathForResource:@"API_KEY" ofType:@""];
+        NSString *content = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+        NSString *apiKey = [content stringByTrimmingCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+        sharedDownloader = [[SOLWundergroundDownloader alloc]initWithAPIKey:apiKey];
     });
     return sharedDownloader;
 }
@@ -52,84 +53,62 @@
 - (instancetype)initWithAPIKey:(NSString *)key
 {
     if(self = [super init]) {
-        if([key length] != 16) {
-            /// SOLWundergroundDownloader requires a valid Wunderground.com API key
-            [NSException raise:@"SOLWundergroundDownloaderException" format:@"Missing API Key"];
-        }
-        self->_key = key;
-        self->_geocoder = [[CLGeocoder alloc]init];
+        self.key = key;
+        self.geocoder = [[CLGeocoder alloc]init];
     }
     return self;
 }
 
 #pragma mark Using a SOLWundergroundDownloader
-- (void)dataForLocation:(CLLocation *)location withTag:(NSInteger)tag completion:(DownloadWeatherDataCompletion)completion delegate:(id<SOLWundergroundDownloaderDelegate>)delegate {
-    /// Main Weather grabbing method
-    /// Requests are not made if the (location and completion) or the delegate is nil
-    if(!location || (!delegate && !completion)) {
+
+- (void)dataForLocation:(CLLocation *)location placemark:(CLPlacemark *)placemark withTag:(NSInteger)tag completion:(SOLWeatherDataDownloadCompletion)completion
+{
+    //  Requests are not made if the (location and completion) or the delegate is nil
+    if(!location || !completion) {
         return;
     }
     
-    /// Turn on the network activity indicator in the status bar
+    //  Turn on the network activity indicator in the status bar
     [[UIApplication sharedApplication]setNetworkActivityIndicatorVisible:YES];
     
-    /// Get the url request
+    //  Get the url request
     NSURLRequest *request = [self urlRequestForLocation:location];
-    CZLog(@"SOLWundergroundDownloader", @"Requesting URL: %@", request.URL);
     
-    /// Make an asynchronous request to the url
-    [NSURLConnection sendAsynchronousRequest:request queue:[NSOperationQueue currentQueue] completionHandler:
+    //  Make an asynchronous request to the url
+    [NSURLConnection sendAsynchronousRequest:request queue:[NSOperationQueue mainQueue] completionHandler:
      ^ (NSURLResponse * response, NSData *data, NSError *connectionError) {
          
-         /// Report connection errors as download failures to the delegate
+         //  Report connection errors as download failures to the delegate
          if(connectionError) {
-             if (delegate) {
-                 [delegate downloadDidFailForLocation:location withTag:tag];
-             }
-             if (completion) {
-                 completion(nil);
-             }
+             completion(nil, connectionError);
          } else {
              
-             /// Serialize the downloaded JSON document and return the weather data to the delegate
+             //  Serialize the downloaded JSON document and return the weather data to the delegate
              @try {
                  NSDictionary *JSON = [self serializedData:data];
                  SOLWeatherData *weatherData = [self dataFromJSON:JSON];
-                 
-                 /// Reverse geocode the given location in order to get city, state, and country
-                 [_geocoder reverseGeocodeLocation:location completionHandler: ^ (NSArray *placemarks, NSError *error) {
-                     if(error) {
-                         [delegate downloadDidFailForLocation:location withTag:tag];
-                         if (delegate) {
-                             [delegate downloadDidFailForLocation:location withTag:tag];
+                 if(placemark) {
+                     weatherData.placemark = placemark;
+                     completion(weatherData, connectionError);
+                 } else {
+                     //  Reverse geocode the given location in order to get city, state, and country
+                     [self.geocoder reverseGeocodeLocation:location completionHandler: ^ (NSArray *placemarks, NSError *error) {
+                         if(placemarks) {
+                             weatherData.placemark = [placemarks lastObject];
+                             completion(weatherData, error);
+                         } else if(error) {
+                             completion(nil, error);
                          }
-                         if (completion) {
-                             completion(nil);
-                         }
-                     }
-                     else {
-                         weatherData.placemark = [placemarks lastObject];
-                         if (delegate) {
-                             [delegate downloadDidFinishWithData:weatherData withTag:tag];
-                         }
-                         if (completion) {
-                             completion(weatherData);
-                         }
-                     }
-                 }];
+                     }];
+                 }
              }
              
-             /// Report any failures during serialization as download failures to the delegate
+             //  Report any failures during serialization as download failures to the delegate
              @catch (NSException *exception) {
-                 if (delegate) {
-                     [delegate downloadDidFailForLocation:location withTag:tag];
-                 }
-                 if (completion) {
-                     completion(nil);
-                 }
+                 completion(nil, [NSError errorWithDomain:@"SOLWundergroundDownloader Internal State Error" code:-1 userInfo:nil]);
              }
              
-             /// Always turn off the network activity indicator after requests are fulfilled
+             //  Always turn off the network activity indicator after requests are fulfilled
              @finally {
                  [[UIApplication sharedApplication] setNetworkActivityIndicatorVisible:NO];
              }
@@ -137,31 +116,22 @@
      }];
 }
 
-- (void)dataForLocation:(CLLocation *)location withTag:(NSInteger)tag delegate:(id<SOLWundergroundDownloaderDelegate>)delegate
+- (void)dataForPlacemark:(CLPlacemark *)placemark withTag:(NSInteger)tag completion:(SOLWeatherDataDownloadCompletion)completion
 {
-    [self dataForLocation:location withTag:tag completion:nil delegate:delegate];
+    [self dataForLocation:placemark.location placemark:placemark withTag:tag completion:completion];
 }
 
-- (void)dataForLocation:(CLLocation *)location withTag:(NSInteger)tag completion:(DownloadWeatherDataCompletion)completion {
-    [self dataForLocation:location withTag:tag completion:completion delegate:nil];
-}
-
-- (void)dataForPlacemark:(CLPlacemark *)placemark withTag:(NSInteger)tag delegate:(id<SOLWundergroundDownloaderDelegate>)delegate
+- (void)dataForLocation:(CLLocation *)location withTag:(NSInteger)tag completion:(SOLWeatherDataDownloadCompletion)completion
 {
-    [self dataForLocation:placemark.location withTag:tag completion:nil delegate:delegate];
+    [self dataForLocation:location placemark:nil withTag:tag completion:completion];
 }
-
-- (void)dataForPlacemark:(CLPlacemark *)placemark withTag:(NSInteger)tag completion:(DownloadWeatherDataCompletion)completion {
-    [self dataForLocation:placemark.location withTag:tag completion:completion delegate:nil];
-}
-
 
 - (NSURLRequest *)urlRequestForLocation:(CLLocation *)location
 {
     static NSString *baseURL =  @"http://api.wunderground.com/api/";
     static NSString *parameters = @"/forecast/conditions/q/";
     CLLocationCoordinate2D coordinates = location.coordinate;
-    NSString *requestURL = [NSString stringWithFormat:@"%@%@%@%f,%f.json", baseURL, _key, parameters,
+    NSString *requestURL = [NSString stringWithFormat:@"%@%@%@%f,%f.json", baseURL, self.key, parameters,
                             coordinates.latitude, coordinates.longitude];
     NSURL *url = [NSURL URLWithString:requestURL];
     NSURLRequest *request = [NSURLRequest requestWithURL:url];
